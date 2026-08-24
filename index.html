@@ -1,0 +1,1108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Face Attendance Portal — Enterprise EMS v10</title>
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
+    <!-- Font Awesome 6 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+    <!-- Firebase Compat -->
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
+    <!-- face-api.js for real face recognition -->
+    <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.13/dist/face-api.js"></script>
+    <style>
+        :root {
+            --primary: #0f172a; --accent: #0d9488; --accent-light: #14b8a6;
+            --bg: #f1f5f9; --card: #ffffff; --text: #1e293b;
+            --text-muted: #64748b; --border: #e2e8f0;
+            --shadow: 0 8px 30px rgba(0, 0, 0, 0.05);
+            --radius: 16px; --radius-sm: 8px; --sidebar-width: 280px;
+            --danger: #ef4444; --success: #22c55e; --warning: #f59e0b; --info: #3b82f6;
+            --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: var(--font); background: var(--bg); color: var(--text); min-height: 100vh; -webkit-font-smoothing: antialiased; }
+        input, select, textarea, button { font-family: inherit; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: var(--bg); }
+        ::-webkit-scrollbar-thumb { background: var(--accent); border-radius: 10px; }
+
+        /* ===== LAYOUT ===== */
+        .portal-container { display: flex; min-height: 100vh; }
+
+        /* ===== SIDEBAR ===== */
+        .sidebar {
+            width: var(--sidebar-width); background: var(--primary); color: #fff; padding: 24px;
+            display: flex; flex-direction: column; position: fixed; height: 100vh; top: 0; left: 0;
+            z-index: 100; border-right: 1px solid #1e293b; transition: transform 0.3s ease;
+        }
+        .sidebar-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 32px; padding: 0 8px; }
+        .sidebar-brand i { font-size: 28px; color: var(--accent); }
+        .sidebar-brand h2 { font-size: 20px; font-weight: 700; letter-spacing: -0.5px; }
+        .sidebar-nav { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+        .nav-item {
+            display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 10px;
+            color: #94a3b8; cursor: pointer; transition: all 0.2s; font-weight: 500; font-size: 14px;
+            border: none; background: transparent; width: 100%; text-align: left;
+        }
+        .nav-item:hover { background: #1e293b; color: #fff; }
+        .nav-item.active { background: rgba(13, 148, 136, 0.2); color: var(--accent-light); box-shadow: inset 3px 0 0 var(--accent); }
+        .nav-item i { width: 22px; font-size: 16px; }
+        .sidebar-footer { margin-top: auto; border-top: 1px solid #1e293b; padding-top: 16px; }
+
+        /* ===== MAIN ===== */
+        .main-content { flex: 1; margin-left: var(--sidebar-width); padding: 32px 40px; min-height: 100vh; }
+
+        /* ===== TOPBAR ===== */
+        .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; }
+        .topbar h1 { font-size: 24px; font-weight: 700; color: var(--primary); display: flex; align-items: center; gap: 12px; }
+        .topbar h1 i { color: var(--accent); }
+        .topbar-right { display: flex; align-items: center; gap: 16px; }
+        .current-time { background: #fff; padding: 8px 16px; border-radius: 50px; font-weight: 600; font-size: 14px; box-shadow: var(--shadow); }
+        .current-time i { color: var(--accent); margin-right: 8px; }
+
+        /* ===== CAMERA CARD ===== */
+        .camera-card {
+            background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow);
+            padding: 24px; max-width: 1000px; margin: 0 auto;
+        }
+        .camera-header { text-align: center; margin-bottom: 24px; }
+        .camera-header h2 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+        .camera-header p { color: var(--text-muted); font-size: 14px; }
+
+        .camera-container {
+            display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; justify-content: center;
+        }
+
+        .video-wrapper {
+            position: relative; width: 100%; max-width: 520px; border-radius: 12px; overflow: hidden;
+            background: #000; aspect-ratio: 4/3;
+        }
+        #video { width: 100%; height: 100%; object-fit: cover; border-radius: 12px; }
+        #overlayCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+        .video-overlay {
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            display: flex; align-items: center; justify-content: center; pointer-events: none;
+        }
+        .face-detected {
+            border: 3px solid var(--success); border-radius: 50%; width: 180px; height: 180px;
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            box-shadow: 0 0 20px rgba(34, 197, 94, 0.5);
+            animation: pulse 2s infinite;
+            display: none;
+        }
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 0 20px rgba(34, 197, 94, 0.3); }
+            50% { box-shadow: 0 0 40px rgba(34, 197, 94, 0.6); }
+        }
+
+        .camera-controls { width: 100%; max-width: 300px; }
+        .camera-controls .btn-start {
+            width: 100%; padding: 16px; background: var(--accent); color: #fff; border: none;
+            border-radius: 12px; font-size: 16px; font-weight: 600; cursor: pointer;
+            display: flex; align-items: center; justify-content: center; gap: 10px;
+            transition: all 0.2s; box-shadow: 0 4px 14px rgba(13, 148, 136, 0.3);
+        }
+        .camera-controls .btn-start:hover { background: #0f766e; transform: translateY(-2px); }
+        .camera-controls .btn-start:disabled { background: #94a3b8; cursor: not-allowed; transform: none; box-shadow: none; }
+        .camera-controls .btn-capture {
+            width: 100%; padding: 14px; background: var(--primary); color: #fff; border: none;
+            border-radius: 12px; font-size: 15px; font-weight: 600; cursor: pointer;
+            display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 12px;
+            transition: all 0.2s;
+        }
+        .camera-controls .btn-capture:hover { background: #1e293b; transform: translateY(-2px); }
+        .camera-controls .btn-capture:disabled { background: #94a3b8; cursor: not-allowed; transform: none; }
+        .camera-controls .btn-manual {
+            width: 100%; padding: 14px; background: #fff; color: var(--text); border: 1px solid var(--border);
+            border-radius: 12px; font-size: 15px; font-weight: 600; cursor: pointer; margin-top: 12px;
+            display: flex; align-items: center; justify-content: center; gap: 10px; transition: all 0.2s;
+        }
+        .camera-controls .btn-manual:hover { background: var(--bg); border-color: var(--accent); }
+
+        /* ===== STATUS INDICATOR ===== */
+        .status-indicator {
+            margin-top: 20px; padding: 16px; border-radius: 12px; text-align: center;
+            display: none; font-weight: 600; font-size: 15px;
+        }
+        .status-indicator.success { background: #dcfce7; color: #16a34a; display: block; }
+        .status-indicator.error { background: #fee2e2; color: #dc2626; display: block; }
+        .status-indicator.warning { background: #fef3c7; color: #d97706; display: block; }
+        .status-indicator.info { background: #dbeafe; color: #2563eb; display: block; }
+
+        /* ===== RECENT ATTENDANCE ===== */
+        .recent-attendance { margin-top: 32px; }
+        .recent-attendance h3 { font-size: 16px; font-weight: 600; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+        .attendance-table { background: #fff; border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+        .attendance-table table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        .attendance-table th {
+            background: #f8fafc; padding: 12px 16px; text-align: left; font-weight: 600; color: var(--text-muted);
+            border-bottom: 2px solid var(--border);
+        }
+        .attendance-table td { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+        .attendance-table tr:last-child td { border-bottom: none; }
+        .attendance-table tr:hover td { background: #f8fafc; }
+
+        /* ===== TOAST ===== */
+        .toast-container { position: fixed; top: 24px; right: 24px; z-index: 9999; display: flex; flex-direction: column; gap: 12px; max-width: 380px; }
+        .toast { background: #fff; padding: 16px 20px; border-radius: 8px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.12); animation: slideRight 0.35s ease; display: flex; align-items: center; gap: 14px; font-size: 14px; border-left: 4px solid var(--accent); }
+        .toast.success { border-left-color: var(--success); }
+        .toast.error { border-left-color: var(--danger); }
+        .toast.warning { border-left-color: var(--warning); }
+        .toast.info { border-left-color: var(--info); }
+        .toast i { font-size: 20px; }
+        @keyframes slideRight { from { opacity: 0; transform: translateX(30px); } to { opacity: 1; transform: translateX(0); } }
+
+        /* ===== LOADER ===== */
+        .global-loader { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.6); z-index: 10000; display: none; align-items: center; justify-content: center; backdrop-filter: blur(2px); }
+        .global-loader.active { display: flex; }
+        .spinner { width: 48px; height: 48px; border: 4px solid #fff; border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ===== MANUAL MODAL ===== */
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6); z-index: 1000; display: none; align-items: center; justify-content: center; padding: 20px; backdrop-filter: blur(6px); }
+        .modal-overlay.open { display: flex; }
+        .modal { background: #fff; border-radius: var(--radius); max-width: 420px; width: 100%; padding: 32px; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.25); animation: modalIn 0.3s ease; }
+        @keyframes modalIn { from { opacity: 0; transform: scale(0.92) translateY(20px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+        .modal-header h2 { font-size: 18px; font-weight: 700; }
+        .modal-header .close-btn { background: transparent; border: none; font-size: 24px; cursor: pointer; color: var(--text-muted); }
+        .form-group { margin-bottom: 16px; }
+        .form-group label { display: block; font-weight: 600; margin-bottom: 6px; font-size: 13px; }
+        .form-group input, .form-group select { width: 100%; padding: 12px 16px; border: 2px solid var(--border); border-radius: 8px; font-size: 14px; }
+        .form-group input:focus, .form-group select:focus { border-color: var(--accent); outline: none; }
+        .btn-primary {
+            width: 100%; padding: 14px; background: var(--accent); color: #fff; border: none;
+            border-radius: 8px; font-weight: 600; font-size: 15px; cursor: pointer; transition: all 0.2s;
+        }
+        .btn-primary:hover { background: #0f766e; transform: translateY(-1px); }
+
+        /* ===== MATCHING ANIMATION ===== */
+        .matching-animation {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(15, 23, 42, 0.8);
+            display: none; align-items: center; justify-content: center; z-index: 9999; backdrop-filter: blur(4px);
+        }
+        .matching-animation.active { display: flex; }
+        .matching-content { text-align: center; color: #fff; }
+        .matching-content i { font-size: 64px; margin-bottom: 16px; color: var(--accent); animation: pulse 1.5s infinite; }
+        .matching-content h3 { font-size: 20px; margin-bottom: 8px; }
+
+        /* ===== RECOGNITION RESULT ===== */
+        .recognition-result {
+            background: #fff; border-radius: var(--radius); box-shadow: var(--shadow);
+            padding: 20px; margin-top: 20px; text-align: center;
+        }
+        .recognition-result.success { border-left: 4px solid var(--success); }
+        .recognition-result.error { border-left: 4px solid var(--danger); }
+        .recognition-result.warning { border-left: 4px solid var(--warning); }
+        .recognition-result .emp-avatar {
+            width: 60px; height: 60px; border-radius: 50%; background: var(--accent); color: #fff;
+            display: inline-flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 700;
+            margin-bottom: 12px;
+        }
+
+        /* ===== RESPONSIVE ===== */
+        @media (max-width: 768px) {
+            .sidebar { transform: translateX(-100%); }
+            .sidebar.open { transform: translateX(0); }
+            .main-content { margin-left: 0; padding: 20px; }
+            .camera-container { flex-direction: column; }
+            .camera-controls { max-width: 100%; }
+        }
+
+        .hidden { display: none !important; }
+        .badge { padding: 4px 12px; border-radius: 50px; font-size: 12px; font-weight: 600; }
+        .badge-success { background: #dcfce7; color: #16a34a; }
+        .badge-info { background: #dbeafe; color: #2563eb; }
+        .badge-warning { background: #fef3c7; color: #d97706; }
+    </style>
+</head>
+<body>
+
+    <!-- ===== LOADER ===== -->
+    <div class="global-loader" id="globalLoader">
+        <div class="spinner"></div>
+    </div>
+
+    <!-- ===== MATCHING ANIMATION ===== -->
+    <div class="matching-animation" id="matchingAnimation">
+        <div class="matching-content">
+            <i class="fas fa-sync-alt fa-spin"></i>
+            <h3>Analyzing Face...</h3>
+            <p>Please keep your face within the frame</p>
+        </div>
+    </div>
+
+    <!-- ===== SIDEBAR ===== -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-brand">
+            <i class="fas fa-user-check"></i>
+            <h2>FaceAttend</h2>
+        </div>
+        <nav class="sidebar-nav">
+            <button class="nav-item active" onclick="showSection('camera')">
+                <i class="fas fa-camera"></i> Face Check-in/out
+            </button>
+            <button class="nav-item" onclick="showSection('records')">
+                <i class="fas fa-history"></i> Attendance Log
+            </button>
+        </nav>
+        <div class="sidebar-footer">
+            <a href="index.html" style="color:#94a3b8; text-decoration:none; display:flex; align-items:center; gap:8px; padding:10px;">
+                <i class="fas fa-arrow-left"></i> Back to EMS
+            </a>
+        </div>
+    </aside>
+
+    <!-- ===== MAIN CONTENT ===== -->
+    <main class="main-content">
+        <div class="topbar">
+            <h1><i class="fas fa-face-smile"></i> Face Attendance Portal</h1>
+            <div class="topbar-right">
+                <div class="current-time">
+                    <i class="fas fa-clock"></i>
+                    <span id="currentTime"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== CAMERA SECTION ===== -->
+        <div id="section-camera" class="section-content">
+            <div class="camera-card">
+                <div class="camera-header">
+                    <h2>Face Recognition Check-in / Check-out</h2>
+                    <p>Position your face within the frame - the system will automatically verify and record your attendance</p>
+                </div>
+                <div class="camera-container">
+                    <div class="video-wrapper">
+                        <video id="video" autoplay playsinline muted></video>
+                        <canvas id="overlayCanvas" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;"></canvas>
+                        <div class="video-overlay">
+                            <div class="face-detected" id="faceOverlay"></div>
+                        </div>
+                    </div>
+                    <div class="camera-controls">
+                        <button class="btn-start" id="btnStart" onclick="startCamera()">
+                            <i class="fas fa-video"></i> Start Camera
+                        </button>
+                        <button class="btn-capture" id="btnCapture" onclick="captureAndRecognize()" disabled>
+                            <i class="fas fa-camera"></i> Capture & Recognize
+                        </button>
+                        <button class="btn-manual" onclick="openManualModal()">
+                            <i class="fas fa-keyboard"></i> Manual Entry
+                        </button>
+                    </div>
+                </div>
+                <div class="status-indicator" id="statusIndicator"></div>
+                
+                <!-- Recognition Result -->
+                <div id="recognitionResult"></div>
+            </div>
+
+            <!-- Recent Attendance (Last 3) -->
+            <div class="recent-attendance">
+                <h3><i class="fas fa-clock" style="color:var(--accent);"></i> Recent Activity</h3>
+                <div class="attendance-table">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Employee</th>
+                                <th>Department</th>
+                                <th>Type</th>
+                            </tr>
+                        </thead>
+                        <tbody id="recentAttendanceBody">
+                            <tr><td colspan="4" style="text-align:center; padding:32px; color:var(--text-muted);">No recent activity</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== RECORDS SECTION (Today's Data) ===== -->
+        <div id="section-records" class="section-content hidden">
+            <div class="camera-card">
+                <div class="camera-header">
+                    <h2><i class="fas fa-history"></i> Today's Attendance Log</h2>
+                    <p>Showing all records for today</p>
+                </div>
+
+                <div class="attendance-table">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Employee</th>
+                                <th>Department</th>
+                                <th>Type</th>
+                                <th>Method</th>
+                            </tr>
+                        </thead>
+                        <tbody id="todayRecordsBody">
+                            <tr><td colspan="5" style="text-align:center; padding:32px; color:var(--text-muted);">No records yet today</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- ===== MANUAL CHECK-IN MODAL ===== -->
+    <div class="modal-overlay" id="manualModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2><i class="fas fa-keyboard"></i> Manual Entry</h2>
+                <button class="close-btn" onclick="closeModal('manualModal')"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="form-group">
+                <label>Employee ID or Username</label>
+                <input type="text" id="manualEmpSearch" placeholder="Search employee..." oninput="searchManualEmployee(this.value)" />
+            </div>
+            <div id="manualEmpResults" class="employee-list" style="max-height: 300px; overflow-y: auto; margin-bottom: 16px;">
+                <p style="color:var(--text-muted); padding:8px;">Type to search...</p>
+            </div>
+            <button class="btn-primary" onclick="submitManualCheckin()"><i class="fas fa-check-circle"></i> Confirm</button>
+        </div>
+    </div>
+
+    <!-- ===== TOAST ===== -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script>
+        // ============================================================
+        //  FIREBASE CONFIG (Same as index.html)
+        // ============================================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyAap2GFEa6778X2v6tRj8ec-eSsR8tXYDk",
+            authDomain: "project-12129cb4-c223-4008-92b.firebaseapp.com",
+            databaseURL: "https://project-12129cb4-c223-4008-92b-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "project-12129cb4-c223-4008-92b",
+            storageBucket: "project-12129cb4-c223-4008-92b.firebasestorage.app",
+            messagingSenderId: "44587974750",
+            appId: "1:44587974750:web:43d733880937a4973834cf",
+            measurementId: "G-CK91840DB3"
+        };
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+        const dbRef = db.ref('ems_data');
+
+        // ============================================================
+        //  STATE
+        // ============================================================
+        let data = { employees: [], attendance: [], faceData: {}, nextAttId: 1 };
+        let currentStream = null;
+        let faceModelLoaded = false;
+        let faceMatcher = null;
+        let faceDetectionInterval = null;
+        let lastRecognizedTime = 0;
+        let firebaseReady = false;
+        let selectedManualEmployeeId = null;
+
+        // ============================================================
+        //  FACE API INITIALIZATION
+        // ============================================================
+        async function loadFaceModels() {
+            try {
+                showLoader();
+                toast('Loading face recognition models...', 'info');
+                
+                const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
+                
+                await Promise.all([
+                    faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+                    faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+                    faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+                ]);
+                
+                faceModelLoaded = true;
+                console.log('✅ Face API models loaded successfully');
+                toast('Face recognition models loaded!', 'success');
+                
+            } catch (error) {
+                console.error('❌ Error loading face models:', error);
+                toast('Failed to load face recognition models', 'error');
+            } finally {
+                hideLoader();
+            }
+        }
+
+        // ============================================================
+        //  DATA LOADING & SYNC
+        // ============================================================
+        function loadData() {
+            showLoader();
+            dbRef.on('value', async (snapshot) => {
+                const val = snapshot.val();
+                if (val) {
+                    data = val;
+                    if (!data.faceData) data.faceData = {};
+                    if (!data.nextAttId) data.nextAttId = 1;
+                } else {
+                    data = { employees: [], attendance: [], faceData: {}, nextAttId: 1 };
+                }
+                firebaseReady = true;
+                hideLoader();
+                
+                // Setup face matcher with latest data
+                if (faceModelLoaded) {
+                    setupFaceMatcher();
+                }
+                
+                // Render UI
+                updateTime();
+                renderRecentAttendance();
+                renderTodayRecords();
+                
+            }, (error) => {
+                console.error('Firebase error:', error);
+                toast('Firebase connection lost. Checking local cache...', 'error');
+                const local = localStorage.getItem('ems_data_fallback');
+                if (local) {
+                    try {
+                        const parsed = JSON.parse(local);
+                        if (parsed.employees) data = parsed;
+                    } catch (e) {}
+                }
+                firebaseReady = false;
+                hideLoader();
+                updateTime();
+                renderRecentAttendance();
+                renderTodayRecords();
+            });
+        }
+
+        function syncData() {
+            if (firebaseReady) {
+                dbRef.set(data).catch(err => {
+                    console.error('Firebase write error:', err);
+                    toast('Failed to save to Firebase.', 'error');
+                });
+            }
+            localStorage.setItem('ems_data_fallback', JSON.stringify(data));
+        }
+
+        // ============================================================
+        //  FACE MATCHER SETUP (Always reads from database)
+        // ============================================================
+        function setupFaceMatcher() {
+            if (!faceModelLoaded || !data.faceData || Object.keys(data.faceData).length === 0) {
+                faceMatcher = null;
+                console.log('No face data in database. Face matcher not set up.');
+                return;
+            }
+            
+            const labeledDescriptors = [];
+            const employees = data.employees || [];
+            
+            for (const empId of Object.keys(data.faceData)) {
+                const emp = employees.find(e => String(e.id) === String(empId));
+                if (!emp) continue;
+                
+                const faceData = data.faceData[empId];
+                if (faceData.descriptor) {
+                    const descriptor = new Float32Array(faceData.descriptor);
+                    const label = emp.name + '|' + emp.id;
+                    labeledDescriptors.push(new faceapi.LabeledFaceDescriptors(label, [descriptor]));
+                }
+            }
+            
+            if (labeledDescriptors.length > 0) {
+                faceMatcher = new faceapi.FaceMatcher(labeledDescriptors, 0.5);
+                console.log('Face matcher setup with', labeledDescriptors.length, 'employees from database');
+            } else {
+                faceMatcher = null;
+            }
+        }
+
+        // ============================================================
+        //  CAMERA MANAGEMENT
+        // ============================================================
+        async function startCamera() {
+            try {
+                // Load face models if not loaded
+                if (!faceModelLoaded) {
+                    await loadFaceModels();
+                }
+                
+                // Setup matcher with current database data
+                setupFaceMatcher();
+                
+                currentStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } } });
+                document.getElementById('video').srcObject = currentStream;
+                document.getElementById('btnStart').disabled = true;
+                document.getElementById('btnCapture').disabled = false;
+                toast('Camera started — face detection active', 'info');
+                
+                // Start continuous face detection
+                startFaceDetectionLoop();
+                
+            } catch (err) {
+                console.error('Camera error:', err);
+                toast('Unable to access camera. Please check permissions.', 'error');
+            }
+        }
+
+        function startFaceDetectionLoop() {
+            // Stop existing loop
+            if (faceDetectionInterval) clearInterval(faceDetectionInterval);
+            
+            const video = document.getElementById('video');
+            const overlayCanvas = document.getElementById('overlayCanvas');
+            
+            // Start periodic detection
+            faceDetectionInterval = setInterval(async () => {
+                if (!video.videoWidth || !faceModelLoaded) return;
+                
+                try {
+                    const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
+                        .withFaceLandmarks()
+                        .withFaceDescriptors();
+                    
+                    // Draw overlays
+                    const displaySize = { width: video.videoWidth, height: video.videoHeight };
+                    faceapi.matchDimensions(overlayCanvas, displaySize);
+                    
+                    const resizedDetections = faceapi.resizeResults(detections, displaySize);
+                    
+                    // Clear canvas
+                    const ctx = overlayCanvas.getContext('2d');
+                    ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+                    
+                    // Draw face landmarks
+                    resizedDetections.forEach(detection => {
+                        const box = detection.detection.box;
+                        const landmarks = detection.landmarks;
+                        
+                        // Draw face box
+                        ctx.strokeStyle = '#0d9488';
+                        ctx.lineWidth = 3;
+                        ctx.strokeRect(box.x, box.y, box.width, box.height);
+                        
+                        // Draw landmarks
+                        const points = landmarks.positions;
+                        ctx.fillStyle = '#14b8a6';
+                        points.forEach(point => {
+                            ctx.beginPath();
+                            ctx.arc(point.x, point.y, 3, 0, 2 * Math.PI);
+                            ctx.fill();
+                        });
+                        
+                        // Draw connections
+                        ctx.strokeStyle = '#14b8a6';
+                        ctx.lineWidth = 1;
+                        for (let i = 0; i < points.length; i++) {
+                            for (let j = i + 1; j < points.length; j++) {
+                                const p1 = points[i];
+                                const p2 = points[j];
+                                const distance = Math.sqrt((p1.x - p2.x) ** 2 + (p1.y - p2.y) ** 2);
+                                if (distance < 50) {
+                                    ctx.beginPath();
+                                    ctx.moveTo(p1.x, p1.y);
+                                    ctx.lineTo(p2.x, p2.y);
+                                    ctx.stroke();
+                                }
+                            }
+                        }
+                    });
+                    
+                    // Show face overlay if face detected
+                    const faceOverlay = document.getElementById('faceOverlay');
+                    if (detections.length > 0) {
+                        faceOverlay.style.display = 'block';
+                    } else {
+                        faceOverlay.style.display = 'none';
+                    }
+                    
+                    // Try to match faces with database
+                    if (detections.length > 0 && faceMatcher) {
+                        for (const detection of detections) {
+                            const result = faceMatcher.findBestMatch(detection.descriptor);
+                            if (result && result.label !== 'unknown' && result.distance < 0.5) {
+                                // Parse employee ID from label
+                                const parts = result.label.split('|');
+                                const empId = parseInt(parts[1]);
+                                const employee = data.employees.find(e => e.id === empId);
+                                if (employee) {
+                                    handleFaceMatch(employee);
+                                }
+                            }
+                        }
+                    }
+                    
+                } catch (error) {
+                    console.error('Face detection error:', error);
+                }
+            }, 1500); // Check every 1.5 seconds
+        }
+
+        // ============================================================
+        //  HANDLE FACE MATCH (Check-in/out logic)
+        // ============================================================
+        function handleFaceMatch(employee) {
+            // Throttle to avoid multiple triggers
+            const now = Date.now();
+            if (now - lastRecognizedTime < 4000) return;
+            lastRecognizedTime = now;
+            
+            // Show recognition result
+            showRecognitionResult(employee);
+            
+            // Determine check-in or check-out
+            const today = getToday();
+            const existing = (data.attendance || []).find(a => a.employeeId === employee.id && a.date === today);
+            
+            if (existing) {
+                if (!existing.checkOut) {
+                    processCheckOut(employee, 'face');
+                } else {
+                    updateCheckOutTime(employee, 'face');
+                }
+            } else {
+                processAttendance(employee, 'face');
+            }
+        }
+
+        // ============================================================
+        //  ATTENDANCE PROCESSING
+        // ============================================================
+        function processAttendance(employee, method) {
+            const today = getToday();
+            const now = new Date();
+            const time = now.toTimeString().split(' ')[0];
+            
+            const existing = (data.attendance || []).find(a => a.employeeId === employee.id && a.date === today);
+            
+            if (existing) {
+                if (!existing.checkOut) {
+                    processCheckOut(employee, method);
+                } else {
+                    updateCheckOutTime(employee, method);
+                }
+                return;
+            }
+            
+            if (!data.nextAttId) data.nextAttId = 1;
+            const record = {
+                id: data.nextAttId++,
+                employeeId: employee.id,
+                date: today,
+                time: time,
+                checkIn: time,
+                checkOut: null,
+                method: method,
+                status: 'present'
+            };
+            
+            if (!data.attendance) data.attendance = [];
+            data.attendance.push(record);
+            
+            syncData();
+            showStatus('success', `✓ Check-in successful: ${employee.name}`);
+            toast(`${employee.name} checked in via Face Recognition`, 'success');
+            
+            renderRecentAttendance();
+            renderTodayRecords();
+        }
+
+        function processCheckOut(employee, method) {
+            const today = getToday();
+            const now = new Date();
+            const time = now.toTimeString().split(' ')[0];
+            
+            const record = (data.attendance || []).find(a => a.employeeId === employee.id && a.date === today);
+            if (!record) {
+                processAttendance(employee, method);
+                return;
+            }
+            
+            if (record.checkOut) {
+                updateCheckOutTime(employee, method);
+                return;
+            }
+            
+            record.checkOut = time;
+            record.status = 'completed';
+            
+            syncData();
+            showStatus('success', `✓ Check-out successful: ${employee.name}`);
+            toast(`${employee.name} checked out via Face Recognition`, 'success');
+            
+            renderRecentAttendance();
+            renderTodayRecords();
+        }
+
+        function updateCheckOutTime(employee, method) {
+            const today = getToday();
+            const now = new Date();
+            const time = now.toTimeString().split(' ')[0];
+            
+            const record = (data.attendance || []).find(a => a.employeeId === employee.id && a.date === today);
+            if (!record) {
+                processAttendance(employee, method);
+                return;
+            }
+            
+            if (!record.checkOut) {
+                processCheckOut(employee, method);
+                return;
+            }
+            
+            record.checkOut = time;
+            record.status = 'completed';
+            
+            syncData();
+            showStatus('success', `✓ Check-out time updated: ${employee.name} (${formatTime(time)})`);
+            toast(`${employee.name} check-out time updated to ${formatTime(time)}`, 'success');
+            
+            renderRecentAttendance();
+            renderTodayRecords();
+        }
+
+        // ============================================================
+        //  MANUAL CHECK-IN/OUT
+        // ============================================================
+        function openManualModal() {
+            document.getElementById('manualModal').classList.add('open');
+            document.getElementById('manualEmpSearch').value = '';
+            document.getElementById('manualEmpResults').innerHTML = '<p style="color:var(--text-muted); padding:8px;">Type to search...</p>';
+        }
+
+        function searchManualEmployee(query) {
+            const results = document.getElementById('manualEmpResults');
+            if (!query) {
+                results.innerHTML = '<p style="color:var(--text-muted); padding:8px;">Type to search...</p>';
+                return;
+            }
+            
+            const employees = data.employees || [];
+            const filtered = employees.filter(e => 
+                e.name.toLowerCase().includes(query.toLowerCase()) ||
+                (e.username || '').toLowerCase().includes(query.toLowerCase()) ||
+                String(e.id).includes(query)
+            );
+            
+            if (filtered.length === 0) {
+                results.innerHTML = '<p style="color:var(--text-muted); padding:8px;">No employees found</p>';
+                return;
+            }
+            
+            results.innerHTML = filtered.map(e => `
+                <div class="employee-card" onclick="selectManualEmployee(${e.id})" style="display:flex; align-items:center; gap:12px; padding:12px; background:#f8fafc; border-radius:8px; cursor:pointer; margin-bottom:8px;">
+                    <div style="width:40px; height:40px; border-radius:50%; background:var(--accent); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700;">${e.name.charAt(0)}</div>
+                    <div style="flex:1;">
+                        <h4 style="font-size:14px; font-weight:600; margin-bottom:2px;">${e.name}</h4>
+                        <p style="font-size:12px; color:var(--text-muted);">${e.department} • ${e.designation}</p>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function selectManualEmployee(id) {
+            selectedManualEmployeeId = id;
+            const emp = (data.employees || []).find(e => e.id === id);
+            if (emp) {
+                submitManualCheckin(emp);
+            }
+        }
+
+        function submitManualCheckin(emp) {
+            if (!emp) {
+                if (!selectedManualEmployeeId) {
+                    toast('Please select an employee', 'warning');
+                    return;
+                }
+                emp = (data.employees || []).find(e => e.id === selectedManualEmployeeId);
+            }
+            
+            if (!emp) { toast('Employee not found', 'error'); return; }
+            
+            const today = getToday();
+            const existing = (data.attendance || []).find(a => a.employeeId === emp.id && a.date === today);
+            
+            if (existing) {
+                if (!existing.checkOut) {
+                    processCheckOut(emp, 'manual');
+                } else {
+                    updateCheckOutTime(emp, 'manual');
+                }
+            } else {
+                processAttendance(emp, 'manual');
+            }
+            closeModal('manualModal');
+            selectedManualEmployeeId = null;
+        }
+
+        // ============================================================
+        //  CAPTURE & RECOGNIZE (Manual trigger)
+        // ============================================================
+        async function captureAndRecognize() {
+            if (!currentStream) { toast('Please start camera first', 'warning'); return; }
+            if (!faceModelLoaded) { toast('Face models not loaded', 'error'); return; }
+            
+            const video = document.getElementById('video');
+            if (!video.videoWidth) { toast('Camera not ready', 'error'); return; }
+            
+            // Show matching animation
+            document.getElementById('matchingAnimation').classList.add('active');
+            
+            try {
+                const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+                    .withFaceLandmarks()
+                    .withFaceDescriptor();
+                
+                setTimeout(() => {
+                    document.getElementById('matchingAnimation').classList.remove('active');
+                    
+                    if (detection && faceMatcher) {
+                        const result = faceMatcher.findBestMatch(detection.descriptor);
+                        if (result && result.label !== 'unknown' && result.distance < 0.5) {
+                            const parts = result.label.split('|');
+                            const empId = parseInt(parts[1]);
+                            const employee = data.employees.find(e => e.id === empId);
+                            if (employee) {
+                                handleFaceMatch(employee);
+                                return;
+                            }
+                        }
+                    }
+                    
+                    showStatus('warning', 'No face match found in database. Please register your face or use manual entry.');
+                    toast('Face not recognized', 'warning');
+                }, 800);
+                
+            } catch (error) {
+                document.getElementById('matchingAnimation').classList.remove('active');
+                console.error('Capture error:', error);
+                toast('Error during face capture', 'error');
+            }
+        }
+
+        // ============================================================
+        //  UI RENDERING
+        // ============================================================
+        function showRecognitionResult(employee) {
+            const resultDiv = document.getElementById('recognitionResult');
+            const today = getToday();
+            const existing = (data.attendance || []).find(a => a.employeeId === employee.id && a.date === today);
+            
+            let actionText = '';
+            let actionClass = '';
+            
+            if (existing) {
+                if (!existing.checkOut) {
+                    actionText = 'Check-out';
+                    actionClass = 'success';
+                } else {
+                    actionText = 'Check-out time updated';
+                    actionClass = 'success';
+                }
+            } else {
+                actionText = 'Check-in';
+                actionClass = 'success';
+            }
+            
+            resultDiv.innerHTML = `
+                <div class="recognition-result ${actionClass}">
+                    <div class="emp-avatar">${employee.name.charAt(0)}</div>
+                    <h3 style="font-size: 18px; font-weight: 700; margin-bottom: 4px;">${employee.name}</h3>
+                    <p style="color: var(--text-muted); margin-bottom: 8px;">${employee.department} • ${employee.designation}</p>
+                    <span class="badge ${actionClass === 'success' ? 'badge-success' : 'badge-warning'}" style="font-size: 14px; padding: 8px 16px;">
+                        <i class="fas ${actionClass === 'success' ? 'fa-check-circle' : 'fa-clock'}"></i> ${actionText} at ${formatTime(new Date().toTimeString().split(' ')[0])}
+                    </span>
+                </div>
+            `;
+            
+            // Auto hide after 5 seconds
+            setTimeout(() => {
+                resultDiv.innerHTML = '';
+            }, 5000);
+        }
+
+        function showStatus(type, message) {
+            const indicator = document.getElementById('statusIndicator');
+            indicator.className = `status-indicator ${type}`;
+            indicator.innerHTML = message;
+            setTimeout(() => {
+                indicator.className = 'status-indicator';
+                indicator.innerHTML = '';
+            }, 6000);
+        }
+
+        function renderRecentAttendance() {
+            // Show only last 3 records
+            const today = getToday();
+            const todayRecords = (data.attendance || []).filter(a => a.date === today);
+            todayRecords.sort((a, b) => {
+                const timeA = a.checkOut || a.time || '';
+                const timeB = b.checkOut || b.time || '';
+                return timeB.localeCompare(timeA);
+            });
+            
+            const recent = todayRecords.slice(0, 3);
+            const tbody = document.getElementById('recentAttendanceBody');
+            
+            if (recent.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:32px; color:var(--text-muted);">No recent activity</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = recent.map(rec => {
+                const emp = (data.employees || []).find(e => e.id === rec.employeeId);
+                const empName = emp ? emp.name : 'Unknown';
+                const empDept = emp ? emp.department : '-';
+                const type = rec.checkOut ? 'Check-out' : 'Check-in';
+                const time = rec.checkOut || rec.time;
+                
+                return `
+                    <tr>
+                        <td><strong>${formatTime(time)}</strong></td>
+                        <td>${empName}</td>
+                        <td>${empDept}</td>
+                        <td><span class="badge ${rec.checkOut ? 'badge-success' : 'badge-info'}">${type}</span></td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function renderTodayRecords() {
+            // Show all today's records
+            const today = getToday();
+            const todayRecords = (data.attendance || []).filter(a => a.date === today);
+            todayRecords.sort((a, b) => (b.time || '').localeCompare(a.time || ''));
+            
+            const tbody = document.getElementById('todayRecordsBody');
+            
+            if (todayRecords.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:32px; color:var(--text-muted);">No records yet today</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = todayRecords.map(rec => {
+                const emp = (data.employees || []).find(e => e.id === rec.employeeId);
+                const empName = emp ? emp.name : 'Unknown';
+                const empDept = emp ? emp.department : '-';
+                const type = rec.checkOut ? 'Check-out' : 'Check-in';
+                const time = rec.checkOut || rec.time;
+                const methodIcon = rec.method === 'face' ? '<i class="fas fa-face-smile" style="color:var(--success);"></i>' : 
+                                  rec.method === 'manual' ? '<i class="fas fa-keyboard" style="color:var(--info);"></i>' : '';
+                
+                return `
+                    <tr>
+                        <td><strong>${formatTime(time)}</strong></td>
+                        <td>${empName}</td>
+                        <td>${empDept}</td>
+                        <td><span class="badge ${rec.checkOut ? 'badge-success' : 'badge-info'}">${type}</span></td>
+                        <td>${methodIcon} ${rec.method === 'face' ? 'Face' : 'Manual'}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        // ============================================================
+        //  NAVIGATION
+        // ============================================================
+        function showSection(section) {
+            document.querySelectorAll('.section-content').forEach(el => el.classList.add('hidden'));
+            document.getElementById(`section-${section}`).classList.remove('hidden');
+            
+            document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+            const navItems = document.querySelectorAll('.nav-item');
+            if (section === 'camera') navItems[0].classList.add('active');
+            if (section === 'records') navItems[1].classList.add('active');
+        }
+
+        // ============================================================
+        //  TOAST
+        // ============================================================
+        function toast(msg, type = 'success') {
+            const container = document.getElementById('toastContainer');
+            const icons = { success: 'fa-check-circle', error: 'fa-times-circle', warning: 'fa-exclamation-triangle', info: 'fa-info-circle' };
+            const el = document.createElement('div');
+            el.className = `toast ${type}`;
+            el.innerHTML = `<i class="fas ${icons[type] || icons.success}"></i> ${msg}`;
+            container.appendChild(el);
+            setTimeout(() => {
+                el.style.opacity = '0';
+                el.style.transform = 'translateX(30px)';
+                el.style.transition = 'all 0.3s';
+                setTimeout(() => el.remove(), 300);
+            }, 3500);
+        }
+
+        // ============================================================
+        //  LOADER
+        // ============================================================
+        function showLoader() { document.getElementById('globalLoader').classList.add('active'); }
+        function hideLoader() { document.getElementById('globalLoader').classList.remove('active'); }
+
+        // ============================================================
+        //  CLOCK
+        // ============================================================
+        function updateTime() {
+            const now = new Date();
+            document.getElementById('currentTime').textContent = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        }
+        setInterval(updateTime, 1000);
+
+        // ============================================================
+        //  HELPERS
+        // ============================================================
+        function getToday() { return new Date().toISOString().split('T')[0]; }
+        
+        function formatTime(timeStr) {
+            if (!timeStr) return '-';
+            const parts = timeStr.split(':');
+            let hours = parseInt(parts[0]);
+            const minutes = parts[1] || '00';
+            const ampm = hours >= 12 ? 'PM' : 'AM';
+            hours = hours % 12;
+            hours = hours ? hours : 12;
+            return `${hours}:${minutes} ${ampm}`;
+        }
+
+        function closeModal(id) {
+            document.getElementById(id).classList.remove('open');
+        }
+
+        // ============================================================
+        //  STOP CAMERA
+        // ============================================================
+        function stopCamera() {
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+                currentStream = null;
+                document.getElementById('btnStart').disabled = false;
+                document.getElementById('btnCapture').disabled = true;
+                document.getElementById('faceOverlay').style.display = 'none';
+            }
+            if (faceDetectionInterval) {
+                clearInterval(faceDetectionInterval);
+                faceDetectionInterval = null;
+            }
+        }
+
+        // ============================================================
+        //  INIT
+        // ============================================================
+        document.addEventListener('DOMContentLoaded', async () => {
+            // Load face models first
+            await loadFaceModels();
+            
+            // Load data from Firebase
+            loadData();
+            
+            // Cleanup on page unload
+            window.addEventListener('beforeunload', () => {
+                stopCamera();
+            });
+        });
+    </script>
+</body>
+</html>
